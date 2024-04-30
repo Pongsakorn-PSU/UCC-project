@@ -1,0 +1,156 @@
+#!/bin/bash
+################ RNA sequencing analysis ###############
+
+pathhome=/path/to/your/working/directory
+pathsw=/path/to/software/
+
+cd $pathhome
+mkdir $pathhome/seq 
+
+#then move all the fastq file into "$pathhome/seq" directory
+
+for all_sample in $pathhome/seq/*_1.fastq.gz ; do
+  filename=$(basename $all_sample _1.fastq.gz)
+  echo $filename
+
+  if [ -d "$pathhome/qc_raw" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory qc_raw"
+     mkdir $pathhome/qc_raw
+  fi
+
+  echo "Starting quality check of ${filename}"
+  $pathsw/FastQC-v0.12.1/fastqc \
+  $pathhome/seq/${filename}_1.fastq.gz \
+  $pathhome/seq/${filename}_2.fastq.gz \
+  -o $pathhome/qc_raw/ \
+  -t 40
+
+  if [ -d "$pathhome/trimmed" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory trimmed"
+     mkdir $pathhome/trimmed
+  fi
+
+  echo "Starting trimming ${filename}"
+  java -jar $pathsw/Trimmomatic/trimmomatic-0.39.jar PE \
+  -threads 40 \
+  -phred33 \
+  $pathhome/seq/${filename}_1.fastq.gz \
+  $pathhome/seq/${filename}_2.fastq.gz \
+  $$pathhome/trimmed/${filename}_pair_1.fastq.gz \
+  $pathhome/trimmed/${filename}_unpair_1.fastq.gz \
+  $pathhome/trimmed/${filename}_pair_2.fastq.gz \
+  $pathhome/trimmed/${filename}_unpair_2.fastq.gz \
+  ILLUMINACLIP:path/to/library/index.fa:2:30:10:2:keepBothReads \
+  LEADING:0 TRAILING:0 SLIDINGWINDOW:4:15 MINLEN:36
+
+  if [ -d "$pathhome/qc_trimmed" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory qc_trimmed"
+     mkdir $pathhome/qc_trimmed
+  fi
+
+  echo "Starting fastqc of trimmed seq of ${filename}"
+  $pathsw/FastQC-v0.12.1/fastqc \
+  $pathhome/trimmed/${filename}_pair_1.fastq.gz \
+  $pathhome/trimmed/${filename}_pair_2.fastq.gz \
+  -o $pathhome/qc_trimmed/ \
+  -t 40
+
+  if [ -d "$pathhome/align" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory align"
+     mkdir $pathhome/align
+  fi
+
+  echo "Starting alignment of ${filename}"
+  $pathsw/hisat2-2.2.1/hisat2 \
+  -p 40 --dta --add-chrname \
+  -x /path/to/hisat2/index/directory \
+  -1 $pathhome/trimmed/${filename}_pair_1.fastq.gz \
+  -2 $pathhome/trimmed/${filename}_pair_2.fastq.gz \
+  | $pathsw/samtools-1.17/samtools view \
+  -@40 \
+  -bS \
+  -o $pathhome/align/${filename}.bam -
+
+  if [ -d "$pathhome/sort" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory sort"
+     mkdir $pathhome/sort
+  fi
+
+  echo "Starting sorting ${filename}"
+  $pathsw/samtools-1.17/samtools sort \
+  $pathhome/align/${filename}.bam \
+  -T $pathhome/sort \
+  -o $pathhome/sort/${filename}.sorted.bam
+
+  echo "Starting indexing ${filename}"
+  $pathsw/samtools-1.17/samtools \
+  index \
+  $pathhome/sort/${filename}.sorted.bam
+
+  if [ -d "$pathhome/assembly" ]
+   then
+     echo "directory exist"
+   else 
+     echo "creating directory assembly"
+     mkdir $pathhome/assembly
+  fi
+
+  echo "Starting transcript assembly of ${filename}"
+  $pathsw/stringtie-2.2.1/stringtie \
+  -p 40 -G path/to/ref/gencode.v38.annotation.gtf \
+  -o $pathhome/assembly/${filename}.gtf \
+  $pathhome/sort/${filename}.sorted.bam
+
+done
+
+if [ -d "$pathhome/merge" ]
+ then
+   echo "directory exist"
+ else 
+   echo "creating directory merge"
+   mkdir $pathhome/merge
+fi
+
+echo "Creation of sample_lst.txt"
+cd $pathhome/assembly
+find $(pwd) -name "*.gtf" > $pathhome/merge/sample_lst.txt
+cd $pathhome
+
+echo "Creation of merge.gtf"
+$pathsw/stringtie-2.2.1/stringtie --merge \
+-p 50 -G path/to/ref/gencode.v38.annotation.gtf \
+-o $pathhome/merge/UCC_merge.gtf \
+$pathhome/sort/sample_lst.txt
+
+if [ -d "$pathhome/expr" ]
+ then
+   echo "directory exist"
+ else 
+   echo "creating directory expr"
+   mkdir $pathhome/expr
+fi
+
+for all_sample in $pathhome/assembly/*.gtf ; do
+  filename2=$(basename $all_sample .gtf)
+  echo $filename2
+  echo "Expression estimation of ${filename2}"
+  $pathsw/stringtie-2.2.1/stringtie -e -B \
+  -p 50 -G $pathhome/merge/UCC_merge.gtf \
+  -o $pathhome/expr/${filename2}/${filename2}.gtf \
+  $pathhome/sort/${filename}.sorted.bam
+done
