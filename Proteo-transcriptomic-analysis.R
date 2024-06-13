@@ -38,40 +38,62 @@ for (i in 1:nrow(Name)) {
 }
 rownames(PC) <- Name$Gene_name
 
-# 3) mRNA-Protein correlation
-# Subset GC by shared gene name in both data set
-final_p <- PC[(rownames(PC) %in% intersect(rownames(PC),rownames(GC))),]
-final_g <- GC[(rownames(GC) %in% intersect(rownames(PC),rownames(GC))),]
-nrow(final_g)
-nrow(final_p)
-# Log2 transform of both data set (if retrieve from logmRNA, no need to transform final_g)
-final_g <- apply(as.matrix.noquote(final_g), 2, as.numeric)
-final_p <- log2(final_p+1)
-final_g <- log2(final_g+1)
-class(final_g)
-class(final_p)
-# Rearrange row name in the same order
-head(row.names(final_g))
-head(row.names(final_p))
-head(final_p)
-final_g <- final_g[rownames(final_p),]
-head(final_g)
+# 3) Urine-tissue mRNA correlation
+# Retrieve gene expression data of urine and cancer tissue
+dim(logcpm)
+mRNAcount <- logcpm[(rownames(logcpm) %in% mrna), ]
+mRNAcount <- mRNAcount %>% as.data.frame()
+
+# Combine duplicate gene by merging expression level of their transcript
+mRNAcount <- mRNAcount %>%
+  group_by(gene_name) %>%
+  summarise(across(colnames(geneCount)[-(1)], sum)) %>%
+  as.data.frame()
+
+mrna_uq <- mRNAcount[,1]
+mrna_uq
+row.names(mRNAcount) <- mrna_uq
+mRNAcount[1] <- list(NULL)
+head(mRNAcount)
+
+# Log transformation and as.matrix numeric
+logmRNA <- log2(mRNAcount+1)
+head(logmRNA)
+colnames(logmRNA)
+logmRNA <- apply(as.matrix.noquote(logmRNA),
+                 2,
+                 as.numeric)
+row.names(logmRNA) <- mrna_uq
+
+# Select gene expression of urinary cell and tissue 
+logmRNA_u <- subset(logmRNA, select = c("sample ID (column name) of urinary sample"))
+logmRNA_t <- subset(logmRNA, select = c("sample ID (column name) of tissue sample")
+logmRNA_c <- subset(logmRNA, select = c("sample ID (column name) of control sample")
+
 # subtract with median of normal
-final_g <- final_g[,1:6] - apply(final_g[,7:11], 1, median) #sample number 7-11 is normal sample
-final_p <- final_p[,1:6] - apply(final_p[,7:11], 1, median)
-# Spearman correlation
+logmRNA_u <- logmRNA_u - apply(logmRNA_c, 1, median)
+logmRNA_t <- logmRNA_t - apply(logmRNA_c, 1, median)
+
+# Perform Spearman correlation
 res <- c()
 x <- c()
 pval <- c()
 
-for (i in 1:nrow(final_g)) {
-  res <- c(res, cor(final_g[i,], final_p[i,], method = "spearman"))
-  x <- cor.test(final_g[i,], final_p[i,], method = "spearman")
+for (i in 1:nrow(logmRNA_t)) {
+  res <- c(res, cor(logmRNA_u[i,], logmRNA_t[i,], method = "spearman"))
+  x <- cor.test(logmRNA_u[i,], logmRNA_t[i,], method = "spearman")
   pval <- c(pval, x$p.value)
 }
 
-Cor_coef <- cbind(gene_name = rownames(secret_g), Spearman_coef = res, pval)
+Cor_coef <- cbind(gene_name = rownames(logmRNA_t), Spearman_coef = res, pval)
 Cor_coef <- data.frame(Cor_coef)
+Coefsign_ut <- Cor_coef %>% dplyr::filter(pval<0.1)
+dim(Coefsign_ut)
+head(Coefsign_ut)
+
+# Save data
+write.table(Cor_coef, file = "F:/Pongsakorn/BCa/Urine_tissue_RNA_corr.txt", sep = "\t",
+            row.names = FALSE, col.names = FALSE)
 
 # 4) Identify gene with dysregulation in both RNA and protein level
 head(genediff$table) #Gene expression profile
